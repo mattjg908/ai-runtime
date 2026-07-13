@@ -1,0 +1,52 @@
+# ------------------------
+# Python
+# ------------------------
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Packaging
+*.egg-info/
+dist/
+build/
+
+# ------------------------
+# Elixir / Erlang
+# ------------------------
+runtime/_build/
+runtime/deps/
+runtime/.elixir_ls/
+
+# Erlang crash dumps
+erl_crash.dump
+
+# ------------------------
+# Editors
+# ------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ------------------------
+# Operating Systems
+# ------------------------
+.DS_Store
+Thumbs.db
+
+# ------------------------
+# Project-generated files
+# ------------------------
+runs/
