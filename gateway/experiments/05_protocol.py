@@ -5,8 +5,7 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class Animal(Protocol):
-    def speak(self) -> str:
-        ...
+    def speak(self) -> str: ...
 
 
 class Dog:
@@ -23,11 +22,11 @@ def make_noise(animal: Animal) -> None:
     print(animal.speak())
 
 
-#class Fish:
+# class Fish:
 #    pass
 
 make_noise(Dog())
 make_noise(Cat())
-#make_noise(Fish())
+# make_noise(Fish())
 
 print(isinstance(Dog(), Animal))
