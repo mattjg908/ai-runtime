@@ -7,8 +7,11 @@ from gateway.models import (
 )
 from gateway.provider import ModelProvider
 
+from .uppercase_provider import UppercaseProvider
+
 __all__ = [
     "FakeProvider",
+    "UppercaseProvider",
     "GenerateRequest",
     "GenerateResponse",
     "ModelProvider",
