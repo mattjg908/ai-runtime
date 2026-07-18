@@ -1,15 +1,13 @@
-from gateway.models import GenerateRequest
+from gateway.models import GenerateRequest, GenerateResponse
 from gateway.provider import ModelProvider
 
 
-def generate_text(
+def generate(
     provider: ModelProvider,
     prompt: str,
-) -> str:
+) -> GenerateResponse:
     request = GenerateRequest(
         prompt=prompt,
     )
 
-    response = provider.generate(request)
-
-    return response.text
+    return provider.generate(request)
