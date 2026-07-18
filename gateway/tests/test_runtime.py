@@ -1,21 +1,19 @@
 from gateway.fake_provider import FakeProvider
-from gateway.runtime import generate_text
+from gateway.runtime import generate
 from gateway.uppercase_provider import UppercaseProvider
 
 
-def test_runtime_works_with_fake_provider() -> None:
-    text = generate_text(
-        FakeProvider(),
-        "hello",
-    )
+def test_generate_with_fake_provider() -> None:
+    response = generate(FakeProvider(), "hello")
 
-    assert text == "Echo: hello"
+    assert response.text == "Echo: hello"
+    assert response.usage.input_tokens == 0
+    assert response.usage.output_tokens == 0
 
 
-def test_runtime_works_with_uppercase_provider() -> None:
-    text = generate_text(
-        UppercaseProvider(),
-        "hello",
-    )
+def test_generate_with_uppercase_provider() -> None:
+    response = generate(UppercaseProvider(), "hello")
 
-    assert text == "HELLO"
+    assert response.text == "HELLO"
+    assert response.usage.input_tokens == 0
+    assert response.usage.output_tokens == 0
