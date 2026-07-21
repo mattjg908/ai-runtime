@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "Typed model gateway for the AI runtime project"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "openai",
     "pydantic>=2,<3",
+    "pydantic-settings",
 ]
 
 [project.optional-dependencies]

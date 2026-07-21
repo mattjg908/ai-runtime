@@ -1,0 +1,55 @@
+from typing import cast
+from unittest.mock import MagicMock
+
+import pytest
+from openai import OpenAI
+
+from gateway.models import GenerateRequest
+from gateway.openai_provider import OpenAIProvider
+
+
+def test_generate_returns_gateway_response() -> None:
+    client = MagicMock()
+    api_response = MagicMock()
+
+    api_response.output_text = "Hello from OpenAI"
+    api_response.usage.input_tokens = 4
+    api_response.usage.output_tokens = 3
+
+    client.responses.create.return_value = api_response
+
+    provider = OpenAIProvider(
+        client=cast(OpenAI, client),
+        model="test-model",
+    )
+
+    response = provider.generate(GenerateRequest(prompt="Say hello"))
+
+    assert response.text == "Hello from OpenAI"
+    assert response.usage.input_tokens == 4
+    assert response.usage.output_tokens == 3
+
+    client.responses.create.assert_called_once_with(
+        model="test-model",
+        input="Say hello",
+    )
+
+
+def test_generate_raises_when_usage_is_missing() -> None:
+    client = MagicMock()
+    api_response = MagicMock()
+
+    api_response.output_text = "Hello"
+    api_response.usage = None
+    client.responses.create.return_value = api_response
+
+    provider = OpenAIProvider(
+        client=cast(OpenAI, client),
+        model="test-model",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="OpenAI response did not contain usage data",
+    ):
+        provider.generate(GenerateRequest(prompt="Say hello"))
