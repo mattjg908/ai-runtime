@@ -7,8 +7,8 @@ def test_generate_with_fake_provider() -> None:
     response = generate(FakeProvider(), "hello")
 
     assert response.text == "Echo: hello"
-    assert response.usage.input_tokens == 0
-    assert response.usage.output_tokens == 0
+    assert response.usage.input_tokens == 1
+    assert response.usage.output_tokens == 2
 
 
 def test_generate_with_uppercase_provider() -> None:
