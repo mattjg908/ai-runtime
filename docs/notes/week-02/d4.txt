@@ -1,0 +1,196 @@
+Python asyncio vs. BEAM concurrency
+
+Python asyncio
+--------------
+
+asyncio uses cooperative scheduling.
+
+An async function does not immediately execute when called. Calling it creates
+a coroutine object:
+
+    coroutine = foo()
+
+The coroutine executes when it is awaited or scheduled.
+
+    result = await foo()
+
+await suspends the current coroutine when the operation needs to wait and gives
+control back to the event loop. The event loop can then run other scheduled
+tasks.
+
+Important: await does not itself create an independently scheduled task.
+
+    result = await foo()
+
+means the current coroutine cannot proceed past that line until foo completes,
+although other already-scheduled tasks can run.
+
+To schedule work independently:
+
+    task = asyncio.create_task(foo())
+
+The current coroutine can then continue doing other work before eventually
+awaiting the task:
+
+    task = asyncio.create_task(foo())
+
+    # current coroutine can continue here
+
+    result = await task
+
+asyncio tasks normally cooperate on a single event-loop OS thread. A task must
+reach an appropriate await point for another task to get an opportunity to run.
+
+Because of this, blocking the event-loop thread is dangerous:
+
+    time.sleep(10)
+
+blocks the OS thread and prevents other tasks on that event loop from running.
+
+By contrast:
+
+    await asyncio.sleep(10)
+
+suspends only the current coroutine and allows the event loop to run other
+ready tasks.
+
+asyncio therefore provides concurrency for I/O-heavy workloads without
+requiring an OS thread for every concurrent operation.
+
+Event loop
+----------
+
+The event loop is asyncio's scheduler. It runs on an OS thread and manages
+asyncio Tasks. When a coroutine reaches an await and must wait, the coroutine
+is suspended and control returns to the event loop. The event loop can then
+run another ready task. When the awaited operation becomes ready, the event
+loop can schedule the suspended task to resume.
+
+BEAM
+----
+
+The BEAM VM is an OS process.
+
+Inside that OS process, BEAM normally runs multiple scheduler threads. These
+are OS threads, commonly with roughly one normal scheduler per logical CPU
+available to the VM.
+
+Elixir/Erlang processes are NOT OS processes or OS threads. They are
+lightweight processes implemented and managed by the BEAM VM.
+
+When Elixir calls:
+
+    spawn(fn -> work() end)
+
+BEAM creates internal process state such as:
+
+    - PID
+    - heap/stack
+    - mailbox
+    - execution state
+    - scheduling metadata
+
+and makes the process runnable on a BEAM scheduler.
+
+The OS does not create a new OS process or thread for each Elixir process.
+
+This is why BEAM processes are lightweight: BEAM already owns memory and
+resources provided to the VM by the OS and can cheaply subdivide and manage
+those resources internally.
+
+Conceptually:
+
+    Operating system
+
+        BEAM OS process
+
+            scheduler OS thread 1
+                BEAM process A
+                BEAM process B
+                BEAM process C
+
+            scheduler OS thread 2
+                BEAM process D
+                BEAM process E
+
+            scheduler OS thread 3
+                ...
+
+BEAM processes are scheduled preemptively by the VM using reductions. An
+ordinary BEAM process does not need to explicitly yield with something like
+Python's await in order for another BEAM process to eventually be scheduled.
+
+Because BEAM has multiple scheduler OS threads, BEAM processes can also execute
+in parallel on multiple CPU cores.
+
+
+Process vs. thread
+------------------
+
+An OS process is primarily a resource and isolation container. It has its own
+virtual address space and OS-managed resources.
+
+A thread is a unit of execution inside an OS process.
+
+Threads in the same process share the process's memory and resources, while
+each thread has its own execution state such as its stack and CPU register
+state.
+
+For BEAM:
+
+    BEAM VM        = OS process
+    BEAM scheduler = OS thread
+    BEAM process   = lightweight VM-managed process
+
+
+Key comparison
+--------------
+
+Python asyncio:
+
+    Python OS process
+        event-loop OS thread
+            asyncio Task A
+            asyncio Task B
+            asyncio Task C
+
+    Scheduling between asyncio tasks is cooperative.
+    Tasks normally yield through await.
+    Blocking the event-loop thread prevents other tasks there from running.
+
+
+BEAM:
+
+    BEAM OS process
+        scheduler OS thread 1
+            BEAM processes
+        scheduler OS thread 2
+            BEAM processes
+        scheduler OS thread 3
+            BEAM processes
+
+    Scheduling between BEAM processes is preemptive at the VM level.
+    BEAM processes do not need explicit await-style yield points.
+    Multiple schedulers allow actual parallel execution across CPU cores.
+
+
+Main takeaway
+-------------
+
+Both asyncio Tasks and BEAM processes are runtime-level concurrency
+abstractions rather than OS processes.
+
+The major difference is their scheduling model:
+
+    asyncio Task  -> cooperatively scheduled by an event loop
+    BEAM process  -> preemptively scheduled by BEAM
+
+BEAM also normally has multiple scheduler OS threads, allowing BEAM processes
+to execute in parallel across CPU cores.
+
+Python asyncio is primarily designed to let many operations make progress
+concurrently while they spend time waiting, especially for I/O. It requires
+the programmer to avoid blocking the event loop and to use await correctly.
+
+BEAM was designed around lightweight isolated processes, message passing,
+preemptive VM scheduling, and large-scale concurrency.
