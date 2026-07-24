@@ -57,46 +57,276 @@ ready tasks.
 asyncio therefore provides concurrency for I/O-heavy workloads without
 requiring an OS thread for every concurrent operation.
 
+
 Event loop
 ----------
 
-The event loop is asyncio's scheduler. It runs on an OS thread and manages
-asyncio Tasks. When a coroutine reaches an await and must wait, the coroutine
-is suspended and control returns to the event loop. The event loop can then
-run another ready task. When the awaited operation becomes ready, the event
-loop can schedule the suspended task to resume.
+The event loop is asyncio's scheduler.
+
+It runs on an OS thread and manages asyncio Tasks.
+
+When a coroutine reaches an await and the awaited operation cannot currently
+make progress, the coroutine is suspended and control returns to the event
+loop.
+
+The event loop can then run another ready task.
+
+When the awaited operation becomes ready, the event loop can schedule the
+suspended task to resume.
+
+Conceptually:
+
+    Python OS process
+        |
+        +-- event-loop OS thread
+                |
+                +-- Task A
+                +-- Task B
+                +-- Task C
+
+
+Awaiting vs. scheduling
+-----------------------
+
+This:
+
+    result = await foo()
+
+does not independently schedule foo and then continue executing the current
+coroutine.
+
+Instead, the current coroutine waits for foo to complete.
+
+Other already-scheduled tasks may still run while the current coroutine is
+suspended.
+
+This:
+
+    task = asyncio.create_task(foo())
+
+creates independently scheduled work.
+
+The current coroutine can continue until it eventually needs the result:
+
+    task = asyncio.create_task(foo())
+
+    # continue doing work
+
+    result = await task
+
+Therefore:
+
+    await             -> wait for an awaitable
+    create_task       -> independently schedule a coroutine
+
+await can enable concurrency because it gives control back to the event loop,
+but await does not by itself create independently scheduled concurrent work.
+
+
+Concurrent tasks with sequential awaits
+---------------------------------------
+
+Suppose:
+
+    first_task = asyncio.create_task(first())
+    second_task = asyncio.create_task(second())
+    third_task = asyncio.create_task(third())
+
+All three tasks are now scheduled.
+
+Then:
+
+    first = await first_task
+    second = await second_task
+    third = await third_task
+
+the assignments happen sequentially.
+
+The second assignment cannot happen until the first await completes.
+
+However, the underlying tasks are still running concurrently.
+
+For example:
+
+    first_task   5 seconds
+    second_task  2 seconds
+    third_task   3 seconds
+
+main may spend 5 seconds waiting at:
+
+    first = await first_task
+
+but during that time second_task may finish at 2 seconds and third_task may
+finish at 3 seconds.
+
+When first_task finally completes, the results of the second and third tasks
+may already be available.
+
+
+Cancellation
+------------
+
+asyncio cancellation is cooperative.
+
+Calling:
+
+    task.cancel()
+
+requests cancellation of the task.
+
+The task normally observes this as:
+
+    asyncio.CancelledError
+
+at a suspension point such as await.
+
+For example:
+
+    try:
+        await operation()
+    except asyncio.CancelledError:
+        cleanup()
+        raise
+
+except means:
+
+    handle this particular exception type
+
+not:
+
+    handle every exception except this type
+
+The raise re-propagates the cancellation after cleanup.
+
+
+finally
+-------
+
+finally runs whenever execution leaves the associated try statement.
+
+That can happen because of:
+
+    - normal completion
+    - return
+    - an exception
+    - cancellation
+
+For example:
+
+    try:
+        await operation()
+    except asyncio.CancelledError:
+        raise
+    finally:
+        cleanup()
+
+If the operation is cancelled, the try block does not finish successfully.
+
+Instead:
+
+    CancelledError
+        |
+        v
+    except handler
+        |
+        v
+    raise
+        |
+        v
+    finally cleanup
+        |
+        v
+    cancellation continues outward
+
+
+Timeouts
+--------
+
+A timeout can be applied with:
+
+    await asyncio.wait_for(
+        operation(),
+        timeout=1.0,
+    )
+
+If the operation takes too long, wait_for cancels the underlying operation.
+
+The underlying coroutine sees:
+
+    CancelledError
+
+while the caller of wait_for sees:
+
+    TimeoutError
+
+So a timeout is implemented using cancellation, but timeout and cancellation
+are not the same concept.
+
+A timeout is the policy:
+
+    this operation has taken too long
+
+Cancellation is the mechanism used to stop the work.
+
+
+TaskGroup
+---------
+
+TaskGroup provides structured concurrency.
+
+Example:
+
+    async with asyncio.TaskGroup() as group:
+        group.create_task(operation_a())
+        group.create_task(operation_b())
+
+The TaskGroup owns the lifetime of its child tasks.
+
+If one child fails with an ordinary exception, TaskGroup cancels the remaining
+children and waits for their cleanup.
+
+Example:
+
+    operation_a -> RuntimeError
+                       |
+                       v
+                TaskGroup cancels operation_b
+                       |
+                       v
+                operation_b receives CancelledError
+
+The cancellation of operation_b is a real exception inside that task.
+
+However, TaskGroup normally does not include sibling CancelledError exceptions
+as independent failures in the ExceptionGroup.
+
+They were caused by the TaskGroup shutting down after another task failed.
+
+The root failure is what matters.
+
+Multiple independent task failures may be propagated using ExceptionGroup and
+handled with except*.
+
 
 BEAM
 ----
 
-The BEAM VM is an OS process.
+The BEAM VM runs as an OS process.
 
-Inside that OS process, BEAM normally runs multiple scheduler threads. These
-are OS threads, commonly with roughly one normal scheduler per logical CPU
-available to the VM.
+Inside that OS process, an SMP-enabled BEAM normally runs multiple scheduler OS
+threads.
 
-Elixir/Erlang processes are NOT OS processes or OS threads. They are
-lightweight processes implemented and managed by the BEAM VM.
+The BEAM Book states that ERTS normally has one scheduler thread per enabled
+logical core under the default configuration.
 
-When Elixir calls:
+This allows multiple Erlang processes to execute in true parallelism on
+multiple cores.
 
-    spawn(fn -> work() end)
+Source:
+The BEAM Book, Scheduling chapter
+https://github.com/happi/theBeamBook
+https://raw.githubusercontent.com/happi/theBeamBook/master/chapters/scheduling.asciidoc
 
-BEAM creates internal process state such as:
-
-    - PID
-    - heap/stack
-    - mailbox
-    - execution state
-    - scheduling metadata
-
-and makes the process runnable on a BEAM scheduler.
-
-The OS does not create a new OS process or thread for each Elixir process.
-
-This is why BEAM processes are lightweight: BEAM already owns memory and
-resources provided to the VM by the OS and can cheaply subdivide and manage
-those resources internally.
 
 Conceptually:
 
@@ -116,31 +346,334 @@ Conceptually:
             scheduler OS thread 3
                 ...
 
-BEAM processes are scheduled preemptively by the VM using reductions. An
-ordinary BEAM process does not need to explicitly yield with something like
-Python's await in order for another BEAM process to eventually be scheduled.
+Elixir/Erlang processes are NOT OS processes.
 
-Because BEAM has multiple scheduler OS threads, BEAM processes can also execute
-in parallel on multiple CPU cores.
+They are also NOT OS threads.
+
+They are lightweight processes implemented and managed internally by the BEAM
+VM.
+
+
+Lightweight BEAM processes
+--------------------------
+
+When Elixir calls:
+
+    spawn(fn -> work() end)
+
+the operating system does not create another OS process or OS thread.
+
+BEAM creates and manages the process internally.
+
+Conceptually, a BEAM process contains VM-managed state such as:
+
+    - PID
+    - heap / stack
+    - mailbox
+    - execution state
+    - scheduling metadata
+
+The operating system provides memory and other resources to the BEAM OS
+process.
+
+BEAM is then free to allocate and manage those resources internally.
+
+Because creating an Erlang process does not require creating a kernel-managed
+OS process or OS thread, BEAM processes can be much lighter weight.
+
+This is one reason it is practical to create very large numbers of Erlang
+processes.
+
+
+BEAM scheduling
+---------------
+
+A useful high-level comparison is:
+
+    asyncio task  -> cooperatively scheduled
+    BEAM process  -> preemptively scheduled from the Erlang programmer's view
+
+However, The BEAM Book gives a more precise description:
+
+    BEAM uses preemptive scheduling on top of cooperative scheduling.
+
+At the Erlang-process level, scheduling behaves preemptively.
+
+An ordinary Erlang process does not have to explicitly call something like:
+
+    await
+
+to allow unrelated processes to receive CPU time.
+
+The VM uses reduction counting to ensure that normal Erlang processes
+regularly give scheduling control back to the runtime.
+
+Internally, however, an Erlang process can only be suspended at certain safe
+points, such as function calls and receives.
+
+The Erlang language, compiler, and BEAM VM are designed together so that normal
+Erlang code reaches such points frequently.
+
+Source:
+The BEAM Book, "Preemptive Multitasking in ERTS Cooperating in C" and
+"Reductions"
+https://raw.githubusercontent.com/happi/theBeamBook/master/chapters/scheduling.asciidoc
+
+
+Reductions
+----------
+
+BEAM uses reductions as an approximation of execution work.
+
+Function calls contribute to the reduction count.
+
+A scheduled process receives a reduction budget.
+
+Conceptually:
+
+    scheduler
+        |
+        v
+    process A
+        |
+        +-- reduction
+        +-- reduction
+        +-- reduction
+        +-- ...
+        |
+        v
+    reduction budget exhausted
+        |
+        v
+    process A becomes runnable again
+        |
+        v
+    scheduler may run another process
+
+A reduction is NOT exactly:
+
+    one CPU instruction
+
+and it is NOT:
+
+    a fixed amount of wall-clock time
+
+It is a VM accounting mechanism used to approximate how much work a process
+has performed.
+
+The BEAM Book notes that the exact definition is not completely fixed, although
+Erlang-level function calls are an important part of reduction counting.
+
+When a process exhausts its reductions, it becomes runnable and waits for a
+scheduler again.
+
+Source:
+The BEAM Book, "Reductions"
+https://raw.githubusercontent.com/happi/theBeamBook/master/chapters/scheduling.asciidoc
+
+
+BEAM process states
+-------------------
+
+Important normal BEAM process states include:
+
+    running
+    runnable
+    waiting
+
+running:
+
+    the process is currently executing on a scheduler
+
+runnable:
+
+    the process is capable of running but is waiting for scheduler time
+
+waiting:
+
+    the process is waiting for something, such as a matching message
+
+Conceptually:
+
+                reductions exhausted
+
+        running --------------------> runnable
+           ^                            |
+           |                            |
+           | scheduler chooses         |
+           +----------------------------+
+
+        running
+           |
+           | receive with no matching message
+           v
+        waiting
+           |
+           | message or timeout
+           v
+        runnable
+
+Source:
+The BEAM Book, "The Process State"
+https://raw.githubusercontent.com/happi/theBeamBook/master/chapters/scheduling.asciidoc
+
+
+BEAM scheduler queues
+---------------------
+
+Runnable processes must wait somewhere until they can execute.
+
+The BEAM Book describes per-scheduler ready queues.
+
+Conceptually:
+
+    Scheduler 1               Scheduler 2
+
+    ready queue               ready queue
+        P1                        P4
+        P2                        P5
+        P3                        P6
+
+A scheduler selects runnable work from its queue.
+
+The real implementation is more complicated because Erlang supports process
+priorities.
+
+Each scheduler actually maintains multiple priority queues.
+
+Source:
+The BEAM Book, "The Ready Queue"
+https://raw.githubusercontent.com/happi/theBeamBook/master/chapters/scheduling.asciidoc
+
+
+BEAM load balancing
+-------------------
+
+Because BEAM has multiple scheduler threads, their workloads can become
+unbalanced.
+
+For example:
+
+    Scheduler 1               Scheduler 2
+
+    P1                        P9
+    P2
+    P3
+    P4
+    P5
+
+BEAM includes load-balancing mechanisms between schedulers.
+
+The BEAM Book describes:
+
+    - task stealing
+    - process migration
+
+If a scheduler runs out of runnable work, it can attempt to steal work from
+another scheduler.
+
+Processes may also migrate between scheduler queues as BEAM attempts to keep
+CPU resources appropriately utilized.
+
+Source:
+The BEAM Book, "Load Balancing", "Task Stealing", and "Migration"
+https://raw.githubusercontent.com/happi/theBeamBook/master/chapters/scheduling.asciidoc
+
+
+BEAM and blocking native code
+-----------------------------
+
+BEAM's scheduling model does not mean that absolutely anything can be
+preempted safely.
+
+The BEAM Book specifically notes that badly implemented native code, such as a
+long-running NIF, can block a scheduler.
+
+Normal Erlang code works well with BEAM scheduling because the language,
+compiler, and VM cooperate to provide frequent suspension opportunities.
+
+Native C code does not automatically have those properties.
+
+Therefore:
+
+    normal Erlang code
+        -> VM regularly regains scheduling control
+
+but:
+
+    badly behaved NIF
+        -> can block a scheduler for a long time
+
+Source:
+The BEAM Book, "Reductions"
+https://raw.githubusercontent.com/happi/theBeamBook/master/chapters/scheduling.asciidoc
 
 
 Process vs. thread
 ------------------
 
-An OS process is primarily a resource and isolation container. It has its own
-virtual address space and OS-managed resources.
+An OS process is primarily a resource and isolation container.
+
+It has its own virtual address space and OS-managed resources.
 
 A thread is a unit of execution inside an OS process.
 
-Threads in the same process share the process's memory and resources, while
-each thread has its own execution state such as its stack and CPU register
-state.
+Threads belonging to the same process generally share the process's memory and
+resources.
+
+Each thread still has its own execution state, such as:
+
+    - stack
+    - instruction position
+    - CPU register state
 
 For BEAM:
 
     BEAM VM        = OS process
     BEAM scheduler = OS thread
     BEAM process   = lightweight VM-managed process
+
+
+Concurrency vs. parallelism
+---------------------------
+
+Concurrency means multiple pieces of work can make progress over the same
+period of time.
+
+Parallelism means multiple pieces of work are literally executing at the same
+time.
+
+A single asyncio event-loop thread can provide concurrency:
+
+    Task A   run / wait / run
+    Task B        run / wait / run
+
+but normally only one of those tasks is executing Python code on that event-loop
+thread at a time.
+
+BEAM can provide both concurrency and parallelism.
+
+On one scheduler/core:
+
+    Process A
+    Process B
+    Process C
+
+can execute concurrently through scheduling.
+
+With several scheduler threads on several cores:
+
+    Scheduler 1 -> Process A
+    Scheduler 2 -> Process B
+
+Process A and Process B can literally execute simultaneously.
+
+The BEAM Book explicitly distinguishes concurrency from parallelism and
+describes SMP ERTS as using several OS threads to execute Erlang processes.
+
+Source:
+The BEAM Book, "Concurrency, Parallelism, and Preemptive Multitasking"
+https://raw.githubusercontent.com/happi/theBeamBook/master/chapters/scheduling.asciidoc
 
 
 Key comparison
@@ -155,8 +688,13 @@ Python asyncio:
             asyncio Task C
 
     Scheduling between asyncio tasks is cooperative.
-    Tasks normally yield through await.
-    Blocking the event-loop thread prevents other tasks there from running.
+
+    Tasks normally give control back to the event loop through await.
+
+    Blocking the event-loop thread prevents the event loop from scheduling
+    other tasks.
+
+    asyncio concurrency is especially useful for I/O-heavy workloads.
 
 
 BEAM:
@@ -164,14 +702,88 @@ BEAM:
     BEAM OS process
         scheduler OS thread 1
             BEAM processes
+
         scheduler OS thread 2
             BEAM processes
+
         scheduler OS thread 3
             BEAM processes
 
-    Scheduling between BEAM processes is preemptive at the VM level.
-    BEAM processes do not need explicit await-style yield points.
+    From the Erlang programmer's perspective, BEAM process scheduling is
+    preemptive.
+
+    Internally, BEAM uses reduction counting and VM-defined suspension points.
+
+    Normal Erlang processes do not require explicit await-style yield points.
+
     Multiple schedulers allow actual parallel execution across CPU cores.
+
+
+Scheduling comparison
+---------------------
+
+asyncio:
+
+    Task runs
+        |
+        v
+    reaches await that must wait
+        |
+        v
+    Task suspended
+        |
+        v
+    event loop chooses another ready Task
+
+
+BEAM:
+
+    process runs
+        |
+        v
+    reductions consumed / receive waits / other suspension point
+        |
+        v
+    scheduler regains control
+        |
+        v
+    another runnable process may execute
+
+
+Important similarity
+--------------------
+
+Both asyncio Tasks and BEAM processes are runtime-level concurrency
+abstractions.
+
+Neither requires creating one OS process for every unit of concurrent work.
+
+Both runtimes multiplex many lightweight units of work over a smaller set of
+OS execution resources.
+
+
+Important differences
+---------------------
+
+asyncio tasks:
+
+    - cooperatively scheduled
+    - normally share an event-loop OS thread
+    - rely on explicit async/await programming
+    - primarily useful for efficiently overlapping I/O waits
+    - do not provide BEAM-style process isolation
+    - blocking code can block the event loop
+
+
+BEAM processes:
+
+    - lightweight VM-managed processes
+    - scheduled using reductions and VM suspension points
+    - appear preemptive to Erlang application code
+    - have isolated process heaps
+    - communicate primarily through message passing
+    - execute across multiple scheduler OS threads
+    - can run in true parallelism across multiple CPU cores
 
 
 Main takeaway
@@ -180,17 +792,46 @@ Main takeaway
 Both asyncio Tasks and BEAM processes are runtime-level concurrency
 abstractions rather than OS processes.
 
-The major difference is their scheduling model:
+But their execution models are substantially different.
 
-    asyncio Task  -> cooperatively scheduled by an event loop
-    BEAM process  -> preemptively scheduled by BEAM
+A good mental model is:
 
-BEAM also normally has multiple scheduler OS threads, allowing BEAM processes
-to execute in parallel across CPU cores.
+    Python asyncio
+        |
+        +-- cooperative Task scheduling
+        +-- event loop
+        +-- explicit await points
+        +-- primarily I/O concurrency
 
-Python asyncio is primarily designed to let many operations make progress
-concurrently while they spend time waiting, especially for I/O. It requires
-the programmer to avoid blocking the event loop and to use await correctly.
 
-BEAM was designed around lightweight isolated processes, message passing,
-preemptive VM scheduling, and large-scale concurrency.
+    BEAM
+        |
+        +-- lightweight isolated processes
+        +-- reduction-based scheduling
+        +-- preemptive behavior at the Erlang level
+        +-- multiple scheduler OS threads
+        +-- per-scheduler run queues
+        +-- load balancing
+        +-- multicore parallelism
+        +-- message passing
+
+The especially important distinction for application developers is:
+
+    In asyncio, application code must explicitly cooperate with the event loop.
+
+    In normal Erlang/Elixir code, the language, compiler, and BEAM VM work
+    together so that processes regularly return scheduling control to the VM.
+
+This is why accidentally running blocking synchronous code in an asyncio event
+loop is such an important concern, while ordinary CPU-bound Erlang code does
+not require the programmer to manually insert await-style yield points.
+
+
+References
+----------
+
+The BEAM Book
+https://github.com/happi/theBeamBook
+
+Scheduling chapter
+https://raw.githubusercontent.com/happi/theBeamBook/master/chapters/scheduling.asciidoc

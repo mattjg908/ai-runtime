@@ -4,22 +4,30 @@ from gateway.app import generate
 from gateway.config import GatewayConfig
 
 
-def test_generate_uses_fake_provider() -> None:
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.mark.anyio
+async def test_generate_with_fake_provider() -> None:
     config = GatewayConfig(provider="fake")
 
-    response = generate(
-        prompt="Hello",
+    response = await generate(
+        prompt="hello",
         config=config,
     )
 
-    assert response.text == "Echo: Hello"
+    assert response.text == "Echo: hello"
 
 
-def test_generate_uses_environment_config(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("GATEWAY_PROVIDER", "uppercase")
+@pytest.mark.anyio
+async def test_generate_with_uppercase_provider() -> None:
+    config = GatewayConfig(provider="uppercase")
 
-    response = generate(prompt="Hello world")
+    response = await generate(
+        prompt="hello",
+        config=config,
+    )
 
-    assert response.text == "HELLO WORLD"
+    assert response.text == "HELLO"

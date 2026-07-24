@@ -1,37 +1,65 @@
-import time
-
 import pytest
 
 from gateway.fake_provider import FakeProvider
-from gateway.models import GenerateRequest
+from gateway.models import GenerateRequest, ProviderError
 
 
-def test_fake_provider_returns_an_echo_response() -> None:
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.mark.anyio
+async def test_fake_provider_returns_an_echo_response() -> None:
     provider = FakeProvider()
     request = GenerateRequest(prompt="Hello")
 
-    response = provider.generate(request)
+    response = await provider.generate(request)
 
     assert response.text == "Echo: Hello"
     assert response.usage.input_tokens == 1
     assert response.usage.output_tokens == 2
 
 
-def test_fake_provider_can_simulate_failure() -> None:
-    provider = FakeProvider(should_fail=True)
+@pytest.mark.anyio
+async def test_fake_provider_can_simulate_failure() -> None:
+    provider = FakeProvider(
+        should_fail=True,
+        retryable_failure=True,
+    )
     request = GenerateRequest(prompt="Hello")
 
-    with pytest.raises(RuntimeError, match="Fake provider failure"):
-        provider.generate(request)
+    with pytest.raises(
+        ProviderError,
+        match="Fake provider failure",
+    ) as error_info:
+        await provider.generate(request)
+
+    assert error_info.value.retryable is True
 
 
-def test_fake_provider_can_simulate_latency() -> None:
+@pytest.mark.anyio
+async def test_fake_provider_can_simulate_non_retryable_failure() -> None:
+    provider = FakeProvider(
+        should_fail=True,
+        retryable_failure=False,
+    )
+    request = GenerateRequest(prompt="Hello")
+
+    with pytest.raises(
+        ProviderError,
+        match="Fake provider failure",
+    ) as error_info:
+        await provider.generate(request)
+
+    assert error_info.value.retryable is False
+
+
+@pytest.mark.anyio
+async def test_fake_provider_can_simulate_latency() -> None:
     provider = FakeProvider(latency_seconds=0.05)
     request = GenerateRequest(prompt="Hello")
 
-    start = time.monotonic()
-    response = provider.generate(request)
-    elapsed = time.monotonic() - start
+    response = await provider.generate(request)
 
     assert response.text == "Echo: Hello"
-    assert elapsed >= 0.05

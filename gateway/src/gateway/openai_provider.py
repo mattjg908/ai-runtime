@@ -9,7 +9,10 @@ class OpenAIProvider(ModelProvider):
         self._client = client
         self._model = model
 
-    def generate(self, request: GenerateRequest) -> GenerateResponse:
+    async def generate(
+        self,
+        request: GenerateRequest,
+    ) -> GenerateResponse:
         response = self._client.responses.create(
             model=self._model,
             input=request.prompt,
