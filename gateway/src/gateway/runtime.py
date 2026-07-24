@@ -1,8 +1,8 @@
-from gateway.models import GenerateRequest, GenerateResponse
-from gateway.provider import ModelProvider
+from .models import GenerateRequest, GenerateResponse
+from .provider import ModelProvider
 
 
-def generate(
+async def generate(
     provider: ModelProvider,
     prompt: str,
 ) -> GenerateResponse:
@@ -10,4 +10,4 @@ def generate(
         prompt=prompt,
     )
 
-    return provider.generate(request)
+    return await provider.generate(request)

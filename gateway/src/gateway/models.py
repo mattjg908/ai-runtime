@@ -15,5 +15,12 @@ class GenerateResponse(BaseModel):
     usage: Usage
 
 
-class ProviderError(BaseModel):
-    message: str
+class ProviderError(Exception):
+    def __init__(
+        self,
+        message: str,
+        retryable: bool,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.retryable = retryable

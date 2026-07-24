@@ -8,7 +8,13 @@ from gateway.models import GenerateRequest
 from gateway.openai_provider import OpenAIProvider
 
 
-def test_generate_returns_gateway_response() -> None:
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.mark.anyio
+async def test_generate_returns_gateway_response() -> None:
     client = MagicMock()
     api_response = MagicMock()
 
@@ -23,7 +29,7 @@ def test_generate_returns_gateway_response() -> None:
         model="test-model",
     )
 
-    response = provider.generate(GenerateRequest(prompt="Say hello"))
+    response = await provider.generate(GenerateRequest(prompt="Say hello"))
 
     assert response.text == "Hello from OpenAI"
     assert response.usage.input_tokens == 4
@@ -35,7 +41,8 @@ def test_generate_returns_gateway_response() -> None:
     )
 
 
-def test_generate_raises_when_usage_is_missing() -> None:
+@pytest.mark.anyio
+async def test_generate_raises_when_usage_is_missing() -> None:
     client = MagicMock()
     api_response = MagicMock()
 
@@ -52,4 +59,4 @@ def test_generate_raises_when_usage_is_missing() -> None:
         RuntimeError,
         match="OpenAI response did not contain usage data",
     ):
-        provider.generate(GenerateRequest(prompt="Say hello"))
+        await provider.generate(GenerateRequest(prompt="Say hello"))

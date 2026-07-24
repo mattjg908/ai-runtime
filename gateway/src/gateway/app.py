@@ -6,7 +6,7 @@ from gateway.provider_factory import create_provider
 from gateway.runtime import generate as runtime_generate
 
 
-def generate(
+async def generate(
     prompt: str,
     config: GatewayConfig | None = None,
 ) -> GenerateResponse:
@@ -20,7 +20,7 @@ def generate(
     else:
         provider = create_provider(resolved_config)
 
-    return runtime_generate(
+    return await runtime_generate(
         provider=provider,
         prompt=prompt,
     )

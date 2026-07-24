@@ -1,8 +1,12 @@
-from gateway.models import GenerateRequest, GenerateResponse, Usage
+from .models import (
+    GenerateRequest,
+    GenerateResponse,
+    Usage,
+)
 
 
 class UppercaseProvider:
-    def generate(
+    async def generate(
         self,
         request: GenerateRequest,
     ) -> GenerateResponse:

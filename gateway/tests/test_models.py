@@ -83,12 +83,22 @@ def test_generate_response_rejects_invalid_nested_usage() -> None:
         )
 
 
-def test_provider_error_accepts_a_message() -> None:
-    error = ProviderError(message="Provider timed out.")
+def test_provider_error_contains_message_and_retryable_flag() -> None:
+    error = ProviderError(
+        message="Provider timed out.",
+        retryable=True,
+    )
 
     assert error.message == "Provider timed out."
+    assert error.retryable is True
 
 
-def test_provider_error_rejects_a_missing_message() -> None:
-    with pytest.raises(ValidationError):
-        ProviderError.model_validate({})
+def test_provider_error_is_an_exception() -> None:
+    error = ProviderError(
+        message="Invalid credentials.",
+        retryable=False,
+    )
+
+    assert isinstance(error, Exception)
+    assert str(error) == "Invalid credentials."
+    assert error.retryable is False
