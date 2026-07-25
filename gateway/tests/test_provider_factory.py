@@ -1,5 +1,8 @@
+from typing import cast
+from unittest.mock import MagicMock
+
 import pytest
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from gateway.config import GatewayConfig
 from gateway.fake_provider import FakeProvider
@@ -29,7 +32,7 @@ def test_create_provider_creates_openai_provider() -> None:
         provider="openai",
         model="test-model",
     )
-    client = OpenAI(api_key="test-api-key")
+    client = cast(AsyncOpenAI, MagicMock())
 
     provider = create_provider(
         config,
@@ -39,11 +42,14 @@ def test_create_provider_creates_openai_provider() -> None:
     assert isinstance(provider, OpenAIProvider)
 
 
-def test_create_provider_requires_client_for_openai() -> None:
-    config = GatewayConfig(provider="openai")
+def test_create_provider_requires_openai_client() -> None:
+    config = GatewayConfig(
+        provider="openai",
+        model="test-model",
+    )
 
     with pytest.raises(
         ValueError,
-        match="An OpenAI client is required",
+        match="openai_client is required",
     ):
         create_provider(config)
