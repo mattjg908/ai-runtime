@@ -1,8 +1,8 @@
 from typing import cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from gateway.models import GenerateRequest
 from gateway.openai_provider import OpenAIProvider
@@ -22,10 +22,12 @@ async def test_generate_returns_gateway_response() -> None:
     api_response.usage.input_tokens = 4
     api_response.usage.output_tokens = 3
 
-    client.responses.create.return_value = api_response
+    client.responses.create = AsyncMock(
+        return_value=api_response,
+    )
 
     provider = OpenAIProvider(
-        client=cast(OpenAI, client),
+        client=cast(AsyncOpenAI, client),
         model="test-model",
     )
 
@@ -35,7 +37,7 @@ async def test_generate_returns_gateway_response() -> None:
     assert response.usage.input_tokens == 4
     assert response.usage.output_tokens == 3
 
-    client.responses.create.assert_called_once_with(
+    client.responses.create.assert_awaited_once_with(
         model="test-model",
         input="Say hello",
     )
@@ -48,10 +50,13 @@ async def test_generate_raises_when_usage_is_missing() -> None:
 
     api_response.output_text = "Hello"
     api_response.usage = None
-    client.responses.create.return_value = api_response
+
+    client.responses.create = AsyncMock(
+        return_value=api_response,
+    )
 
     provider = OpenAIProvider(
-        client=cast(OpenAI, client),
+        client=cast(AsyncOpenAI, client),
         model="test-model",
     )
 

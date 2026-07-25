@@ -1,4 +1,4 @@
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from gateway.config import GatewayConfig
 from gateway.models import GenerateResponse
@@ -15,7 +15,7 @@ async def generate(
     if resolved_config.provider == "openai":
         provider = create_provider(
             resolved_config,
-            openai_client=OpenAI(),
+            openai_client=AsyncOpenAI(),
         )
     else:
         provider = create_provider(resolved_config)

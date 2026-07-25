@@ -1,11 +1,15 @@
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from gateway.models import GenerateRequest, GenerateResponse, Usage
 from gateway.provider import ModelProvider
 
 
 class OpenAIProvider(ModelProvider):
-    def __init__(self, client: OpenAI, model: str) -> None:
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        model: str,
+    ) -> None:
         self._client = client
         self._model = model
 
@@ -13,7 +17,7 @@ class OpenAIProvider(ModelProvider):
         self,
         request: GenerateRequest,
     ) -> GenerateResponse:
-        response = self._client.responses.create(
+        response = await self._client.responses.create(
             model=self._model,
             input=request.prompt,
         )

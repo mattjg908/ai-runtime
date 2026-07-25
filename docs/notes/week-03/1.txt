@@ -1,0 +1,445 @@
+Week 3 Day 1 - OpenAI provider and async client
+
+Goal
+----
+
+Understand enough of the OpenAI API and Python SDK to make one basic model
+request through our provider boundary.
+
+The Week 3 goal is to put one real vendor behind our interface without leaking
+vendor SDK objects into the rest of the application.
+
+
+Responses API
+-------------
+
+The OpenAI Python SDK describes the Responses API as the primary API for
+interacting with OpenAI models.
+
+A basic synchronous request looks conceptually like:
+
+    from openai import OpenAI
+
+    client = OpenAI()
+
+    response = client.responses.create(
+        model="...",
+        input="Explain an OTP supervision tree",
+    )
+
+    print(response.output_text)
+
+The important pieces are:
+
+    OpenAI()
+        -> creates the SDK client
+
+    client.responses
+        -> the SDK resource for the Responses API
+
+    responses.create(...)
+        -> performs a model inference request
+
+    model
+        -> selects which trained model handles the request
+
+    input
+        -> supplies input to the model
+
+    response.output_text
+        -> convenient SDK property containing the generated text
+
+
+Inference
+---------
+
+In the AI infrastructure context, inference means running an already-trained
+model to produce an output.
+
+Training:
+
+    training data
+        |
+        v
+    model training
+        |
+        v
+    trained model
+
+Inference:
+
+    input / prompt
+        |
+        v
+    trained model
+        |
+        v
+    generated output
+
+Our gateway sends inference requests. It does not train models.
+
+
+Provider boundary
+-----------------
+
+Application code should not depend directly on OpenAI SDK response types.
+
+Our provider translates:
+
+    GenerateRequest
+        |
+        | request.prompt
+        v
+    OpenAI Responses API request
+        |
+        v
+    OpenAI SDK response
+        |
+        | output_text
+        | usage
+        v
+    GenerateResponse
+
+The rest of the application therefore deals with:
+
+    GenerateRequest
+    GenerateResponse
+    Usage
+    ProviderError
+
+rather than OpenAI-specific SDK objects.
+
+This matters because other providers can later have completely different SDK
+request and response types.
+
+Each provider adapts its vendor-specific representation into our common
+internal representation.
+
+
+Why not expose the raw OpenAI response?
+---------------------------------------
+
+The raw OpenAI response contains substantially more information than the
+gateway currently needs.
+
+Returning the entire SDK response would:
+
+    - couple application code to OpenAI
+    - make another provider harder to substitute
+    - expose vendor-specific response structure
+    - add data we do not currently need
+
+YAGNI applies here.
+
+We should add fields to GenerateResponse when the gateway itself needs those
+fields, rather than simply mirroring everything OpenAI happens to return.
+
+
+Model configuration
+-------------------
+
+The model name is stored on OpenAIProvider:
+
+    self._model
+
+and passed into:
+
+    client.responses.create(
+        model=self._model,
+        ...
+    )
+
+The model choice is therefore configurable rather than hard-coded inside
+generate().
+
+The runtime does not need to know which OpenAI model is being used.
+
+The provider owns the vendor-specific implementation while configuration
+determines which model that provider uses.
+
+
+Usage normalization
+-------------------
+
+The OpenAI response can contain token usage information.
+
+We translate it into our own:
+
+    Usage(
+        input_tokens=...,
+        output_tokens=...,
+    )
+
+Token usage is useful across providers and later supports:
+
+    - cost estimation
+    - observability
+    - provider comparison
+    - rate-limit accounting
+    - evaluation reports
+
+The individual providers are responsible for translating their own usage
+representation into the gateway's Usage type.
+
+
+Synchronous vs asynchronous OpenAI clients
+------------------------------------------
+
+The OpenAI Python SDK provides both:
+
+    OpenAI
+    AsyncOpenAI
+
+The synchronous form is:
+
+    client = OpenAI()
+
+    response = client.responses.create(...)
+
+The asynchronous form is:
+
+    client = AsyncOpenAI()
+
+    response = await client.responses.create(...)
+
+This distinction matters because our gateway provider interface is asynchronous.
+
+
+Why async def alone is not enough
+---------------------------------
+
+This is NOT genuinely asynchronous network I/O:
+
+    async def generate(...):
+        response = self._client.responses.create(...)
+
+if self._client is the synchronous OpenAI client.
+
+The outer function is async, but:
+
+    self._client.responses.create(...)
+
+is still a synchronous network call.
+
+If that call takes five seconds, the event-loop OS thread remains blocked for
+those five seconds.
+
+There is no await point inside that synchronous HTTP call where asyncio can
+regain control.
+
+Therefore:
+
+    async def
+        |
+        v
+    synchronous HTTP call
+        |
+        v
+    event-loop thread blocked
+        |
+        v
+    other tasks on that event loop cannot make progress
+
+
+AsyncOpenAI
+-----------
+
+The proper async form is:
+
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI()
+
+    response = await client.responses.create(...)
+
+Now, while the HTTP request is waiting on the network, the current coroutine
+can be suspended and the asyncio event loop can run other ready tasks.
+
+Conceptually:
+
+    OpenAIProvider.generate()
+        |
+        v
+    await client.responses.create(...)
+        |
+        v
+    network operation waiting
+        |
+        v
+    generate() suspended
+        |
+        v
+    event loop may run another task
+
+
+Async propagation through the gateway
+-------------------------------------
+
+Our call chain is now asynchronous:
+
+    caller
+        |
+        | await
+        v
+    app.generate()
+        |
+        | await
+        v
+    runtime.generate()
+        |
+        | await
+        v
+    provider.generate()
+        |
+        | await
+        v
+    AsyncOpenAI.responses.create()
+
+Each async function call creates a coroutine.
+
+Each caller awaits the coroutine below it.
+
+Once the lowest operation resolves, its value propagates back upward:
+
+    OpenAI request
+        |
+        v
+    OpenAIProvider gets SDK response
+        |
+        v
+    OpenAIProvider returns GenerateResponse
+        |
+        v
+    runtime's await resolves
+        |
+        v
+    runtime returns GenerateResponse
+        |
+        v
+    app's await resolves
+        |
+        v
+    app returns GenerateResponse
+
+
+Public vs internal API
+----------------------
+
+The intended application-facing boundary is approximately:
+
+    GatewayConfig
+    app.generate()
+
+The consumer should not normally need to understand:
+
+    runtime.py
+    ModelProvider
+    OpenAIProvider
+    FakeProvider
+    UppercaseProvider
+    ReliableProvider
+
+Those are implementation details behind the application facade.
+
+A consumer can conceptually do:
+
+    response = await generate(
+        prompt="...",
+        config=config,
+    )
+
+while the application decides how to construct and invoke the configured
+provider internally.
+
+
+Testing async SDK calls
+-----------------------
+
+When OpenAIProvider used the synchronous SDK, a normal MagicMock could stand in
+for:
+
+    client.responses.create(...)
+
+Once the real implementation does:
+
+    await client.responses.create(...)
+
+the mocked create method must itself be awaitable.
+
+Therefore tests use:
+
+    AsyncMock
+
+For example:
+
+    client.responses.create = AsyncMock(
+        return_value=api_response,
+    )
+
+The test can also verify that the method was awaited:
+
+    client.responses.create.assert_awaited_once_with(
+        model="test-model",
+        input="Say hello",
+    )
+
+This is stronger than merely checking that a function was called. It verifies
+that our async integration actually uses the SDK asynchronously.
+
+
+One remaining reliability question
+----------------------------------
+
+The OpenAI SDK has its own retry behavior for some failures.
+
+Our gateway also has ReliableProvider, which implements its own retry policy.
+
+We should make an explicit decision about which layer owns retries rather than
+accidentally stacking retry policies.
+
+Do not change that behavior as part of today's async-client migration.
+
+
+Main takeaway
+-------------
+
+OpenAIProvider is an adapter.
+
+Its responsibility is:
+
+    our provider-neutral request
+        |
+        v
+    OpenAI-specific API request
+        |
+        v
+    OpenAI-specific response
+        |
+        v
+    our provider-neutral response
+
+Because the gateway itself is async, the provider should use AsyncOpenAI so
+that network waits cooperate with the asyncio event loop.
+
+Writing:
+
+    async def generate(...)
+
+does not make synchronous code inside generate() asynchronous.
+
+The actual I/O operation must also support async execution and be awaited.
+
+
+References
+----------
+
+OpenAI Python SDK:
+https://github.com/openai/openai-python
+
+The SDK documents the Responses API as the primary API for model interaction
+and provides both OpenAI and AsyncOpenAI clients. Async API calls use await.
+
+Week 3 plan:
+First real model provider.
+Goal: put one vendor behind the interface without leaking SDK objects into the
+application.
